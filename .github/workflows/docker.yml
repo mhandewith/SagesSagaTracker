@@ -1,0 +1,79 @@
+name: Test and publish Docker image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Serialize publications so an older build cannot overwrite a newer latest tag.
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - name: Test and vet
+        run: |
+          test -z "$(gofmt -l cmd)"
+          go test -race ./...
+          go vet ./...
+      - name: Prepare image name and version
+        id: image
+        env:
+          REPOSITORY: ${{ github.repository }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          echo "name=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          version="sha-${GITHUB_SHA::12}"
+          if [ "$REF_TYPE" = tag ]; then version="$REF_NAME"; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build Linux container
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          VERSION: ${{ steps.image.outputs.version }}
+        run: docker build --build-arg VERSION="$VERSION" --build-arg REVISION="$GITHUB_SHA" -t "$IMAGE:$VERSION" .
+      - name: Smoke test container
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          VERSION: ${{ steps.image.outputs.version }}
+        run: |
+          docker run -d --name saga-smoke -p 127.0.0.1:18080:8080 "$IMAGE:$VERSION"
+          trap 'docker logs saga-smoke; docker rm -f saga-smoke' EXIT
+          curl --fail --retry 10 --retry-connrefused --retry-delay 1 http://127.0.0.1:18080/healthz
+          curl --fail http://127.0.0.1:18080/api/v1/ping | python3 -c 'import json,sys; assert json.load(sys.stdin)["message"] == "pong"'
+          docker exec saga-smoke /server healthcheck
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish tested image
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          VERSION: ${{ steps.image.outputs.version }}
+        run: |
+          docker push "$IMAGE:$VERSION"
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            docker tag "$IMAGE:$VERSION" "$IMAGE:latest"
+            docker push "$IMAGE:latest"
+          fi
