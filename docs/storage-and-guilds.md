@@ -9,7 +9,7 @@ This milestone stores guilds in SQLite and issues a guild key that resolves to t
 - The server creates the database and applies versioned schema migrations automatically. Startup fails if storage is inaccessible or the schema is newer than this server supports.
 - SQLite uses WAL journaling. Keep the entire data directory, including any `sagetracker.db-wal` and `sagetracker.db-shm` files, together.
 - `/healthz` now checks database access and returns HTTP 503 if unavailable.
-- Guild names are unique ignoring case and repeated/outer whitespace. Names may contain 1–100 characters, with no control characters.
+- Guild names are unique within a server, ignoring case and repeated/outer whitespace in both fields. Server is required for new registrations and uses the same 1–100 character limit. Server names are free text; use a consistent spelling. Names may contain 1–100 characters, with no control characters.
 - Keys contain 256 random bits. Only their SHA-256 hashes are stored; the original key is returned once at registration. No recovery or rotation endpoint exists yet. Save it in your password manager before closing the registration session.
 - Registration is currently open to anyone who can reach this server. Guild keys grant guild lookup access; they are not server administrator credentials. Keep this milestone on the LAN. Use HTTPS before sending keys across untrusted networks.
 
@@ -69,16 +69,16 @@ $registration = Invoke-RestMethod `
     -Method Post `
     -Uri "$baseUrl/api/v1/guilds" `
     -ContentType 'application/json' `
-    -Body (@{ name = 'Your Guild Name' } | ConvertTo-Json)
+    -Body (@{ name = 'Your Guild Name'; server = 'Your Server Name' } | ConvertTo-Json)
 
 $registration.guild
 $guildKey = $registration.key
 $guildKey
 ```
 
-Registration returns **HTTP 201** and JSON containing `guild` (`id`, `name`, `created_at`) and `key`. The key starts with `sgt_`. Copy it to your password manager; do not paste it into GitHub, logs, or chat.
+Registration returns **HTTP 201** and JSON containing `guild` (`id`, `name`, `server`, `created_at`) and `key`. The key starts with `sgt_`. Copy it to your password manager; do not paste it into GitHub, logs, or chat.
 
-Register only once. Registering the same normalized name again returns **409 Conflict** and does not return or replace the existing key. If a registration response is lost after it reaches the server, the guild may already exist; this initial API has no key recovery flow.
+Register only once. Registering the same normalized name and server again returns **409 Conflict** and does not return or replace the existing key. If a registration response is lost after it reaches the server, the guild may already exist; this initial API has no key recovery flow.
 
 ## 5. Validate the key
 
@@ -137,8 +137,27 @@ To restore, stop the container, preserve the current directory as a separate bac
 
 | Method/path | Input | Success | Common errors |
 | --- | --- | --- | --- |
-| `POST /api/v1/guilds` | JSON `{"name":"Your Guild"}` | 201: `guild`, `key` | 400 invalid input; 409 duplicate; 413 too large; 415 wrong content type |
+| `POST /api/v1/guilds` | JSON `{"name":"Your Guild","server":"Your Server"}` | 201: `guild`, `key` | 400 invalid input; 409 duplicate; 413 too large; 415 wrong content type |
 | `GET /api/v1/guilds/me` | `Authorization: Bearer sgt_...` | 200: `guild` | 401 missing/invalid key |
 | `GET /healthz` | None | 200: `{"status":"ok"}` | 503 database unavailable |
 
 [Unraid path mapping documentation](https://docs.unraid.net/unraid-os/using-unraid-to/run-docker-containers/managing-and-customizing-containers/) explains how host and container paths correspond. [The SQLite driver documentation](https://pkg.go.dev/modernc.org/sqlite) describes the pure-Go database driver used here.
+
+## Upgrading existing guilds to include a server
+
+Back up the data folder with the container stopped before updating. Schema version 2 migrates automatically, preserving guild IDs, timestamps, and keys. Existing guilds return `server: ""` until assigned; their keys remain valid. Older images do not support this schema.
+
+Assign the server once using the existing guild key (do not register the guild again):
+
+```powershell
+$baseUrl = 'http://192.168.86.127:8095'
+# Use the key already saved in $guildKey, or load it from your password manager.
+$headers = @{ Authorization = "Bearer $guildKey" }
+Invoke-RestMethod -Method Patch -Uri "$baseUrl/api/v1/guilds/me/server" `
+    -Headers $headers -ContentType 'application/json' `
+    -Body (@{ server = 'Your Server Name' } | ConvertTo-Json)
+```
+
+This authenticated endpoint only assigns a missing legacy server. It returns 409 if a server is already assigned or another guild has that name on the requested server. A conflict changes neither guild. `GET /api/v1/guilds/me` now includes `server`.
+
+Verify that the same name can register on two different servers (201 each), but repeating the same name/server returns 409. Omitting server returns 400. Restart and validate the existing key again to confirm its server persists.

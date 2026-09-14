@@ -45,7 +45,7 @@ with tempfile.TemporaryDirectory() as folder:
     try:
         start(data)
         assert request("/api/v1/ping")["message"] == "pong"
-        registered = request("/api/v1/guilds", {"name": "Container test guild"})
+        registered = request("/api/v1/guilds", {"name": "Container test guild", "server": "Test Server"})
         key = registered["key"]
         assert request("/api/v1/guilds/me", key=key)["guild"] == registered["guild"]
         docker("exec", name, "/server", "healthcheck")

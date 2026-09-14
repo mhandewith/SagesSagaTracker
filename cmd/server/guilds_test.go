@@ -30,7 +30,7 @@ func TestGuildRegistrationPersists(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { s.db.Close() }()
-	w := requestGuild(routes(s), "POST", "/api/v1/guilds", `{"name":"  Test   Guild  "}`, "")
+	w := requestGuild(routes(s), "POST", "/api/v1/guilds", `{"name":"  Test   Guild  ","server":"  Server   One  "}`, "")
 	if w.Code != 201 {
 		t.Fatalf("registration: %d %s", w.Code, w.Body.String())
 	}
@@ -78,7 +78,7 @@ func TestGuildRegistrationPersists(t *testing.T) {
 	if validated.Guild != registration.Guild {
 		t.Fatal("guild changed after reopen")
 	}
-	w = requestGuild(routes(s), "POST", "/api/v1/guilds", `{"name":"test guild"}`, "")
+	w = requestGuild(routes(s), "POST", "/api/v1/guilds", `{"name":"test guild","server":"server one"}`, "")
 	if w.Code != 409 {
 		t.Fatalf("duplicate name: %d", w.Code)
 	}
@@ -118,7 +118,7 @@ func TestConcurrentDuplicateRegistration(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			statuses <- requestGuild(h, "POST", "/api/v1/guilds", `{"name":"Concurrent"}`, "").Code
+			statuses <- requestGuild(h, "POST", "/api/v1/guilds", `{"name":"Concurrent","server":"Server One"}`, "").Code
 		}()
 	}
 	wg.Wait()
@@ -153,11 +153,11 @@ func TestDatabaseFailures(t *testing.T) {
 
 func TestKeysAreDistinctAndScoped(t *testing.T) {
 	s := testStore(t)
-	a, ka, err := s.createGuild(context.Background(), "A")
+	a, ka, err := s.createGuild(context.Background(), "A", "Server One")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, kb, err := s.createGuild(context.Background(), "B")
+	b, kb, err := s.createGuild(context.Background(), "B", "Server One")
 	if err != nil {
 		t.Fatal(err)
 	}
