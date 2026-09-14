@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -36,9 +37,20 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	dataDir := os.Getenv("DATA_DIR")
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	databasePath := filepath.Join(dataDir, "sagetracker.db")
+	storage, err := openStore(databasePath)
+	if err != nil {
+		return err
+	}
+	defer storage.db.Close()
+	slog.Info("database ready", "path", databasePath)
 	server := &http.Server{
 		Addr:              ":" + port,
-		Handler:           routes(),
+		Handler:           routes(storage),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -66,8 +78,9 @@ func run() error {
 	return nil
 }
 
-func routes() http.Handler {
+func routes(storage *store) http.Handler {
 	mux := http.NewServeMux()
+	registerGuildRoutes(mux, storage)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{
 			"service": "SagesSagaTracker", "status": "ok", "version": version,
@@ -75,6 +88,12 @@ func routes() http.Handler {
 		})
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := storage.ready(ctx); err != nil {
+			apiError(w, http.StatusServiceUnavailable, "database unavailable")
+			return
+		}
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /api/v1/ping", func(w http.ResponseWriter, r *http.Request) {

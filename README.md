@@ -2,7 +2,7 @@
 
 Minimal Go HTTP service for the future guild saga tracker. This first milestone provides a testable deployment loop: push to GitHub, publish a Docker image, update Unraid, and call the API.
 
-No database, authentication, guilds, or saga tracking is implemented yet. No persistent volume is needed for this version. Keep this initial service on your LAN while the application is being developed.
+SQLite storage, guild registration, and guild-key validation are now implemented. Follow [the storage and guild setup guide](docs/storage-and-guilds.md) before updating an existing Unraid deployment. Groups and saga tracking are not implemented yet. Registration is currently open to anyone who can reach the service; keep it on your LAN until administrative access controls are added.
 
 ## API
 
@@ -16,7 +16,7 @@ The service listens on all interfaces, port **8080** by default. Set the `PORT` 
 
 ## Run locally
 
-Go 1.24 or newer is required; Docker and CI build with Go 1.26. There are no third-party Go dependencies.
+Go 1.26 or newer is required. Docker and CI use Go 1.26. SQLite uses the pure-Go modernc.org/sqlite driver, so no C compiler or external database server is needed. The Go command can download the required toolchain automatically.
 
 In PowerShell:
 
@@ -42,7 +42,7 @@ Optional local Docker test (Docker Desktop must be running in Linux container mo
 
 ```powershell
 docker build -t sages-saga-tracker:local .
-docker run --rm --name sages-saga-tracker -p 8095:8080 sages-saga-tracker:local
+docker run --rm --name sages-saga-tracker -p 8095:8080 -v saga-local-data:/data sages-saga-tracker:local
 ```
 
 Call `http://localhost:8095/api/v1/ping`. The image is a static Go binary running as a non-root user and supports graceful shutdown and Docker health checks.
@@ -53,7 +53,7 @@ From the repository folder, review the files and commit:
 
 ```powershell
 git status
-git add README.md go.mod cmd Dockerfile .dockerignore .github/workflows/docker.yml
+git add README.md docs go.mod go.sum cmd scripts Dockerfile .dockerignore .github/workflows/docker.yml
 git commit -m "Add Go service and Docker publishing workflow"
 git push origin main
 ```
@@ -105,7 +105,7 @@ Choose **Add another Path, Port, Variable, Label or Device**, then add a **Port*
 | Host Port | `8095` (or another unused port) |
 | Connection Type | `TCP` |
 
-Leave other settings at their defaults. No database container, path mapping, or environment variables are needed yet. Click **Apply**, wait for the image to download, and enable **Autostart** if desired. Unraid saves the container configuration for later reuse.
+Before clicking **Apply**, add the read/write mapping `/mnt/user/appdata/sages-saga-tracker` to `/data` and set its ownership as described in [the storage guide](docs/storage-and-guilds.md). No separate database container is needed. Click **Apply**, wait for the image to download, and enable **Autostart** if desired. Unraid saves the container configuration for later reuse.
 
 ## 4. Test your Unraid deployment
 

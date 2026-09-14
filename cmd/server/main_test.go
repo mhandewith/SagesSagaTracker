@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 )
 
 func TestEndpoints(t *testing.T) {
+	storage := testStore(t)
 	for _, tc := range []struct{ path, key, want string }{
 		{"/", "service", "SagesSagaTracker"},
 		{"/healthz", "status", "ok"},
@@ -16,7 +18,7 @@ func TestEndpoints(t *testing.T) {
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			routes().ServeHTTP(response, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			routes(storage).ServeHTTP(response, httptest.NewRequest(http.MethodGet, tc.path, nil))
 			if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "application/json" {
 				t.Fatalf("unexpected response: %d %v", response.Code, response.Header())
 			}
@@ -40,6 +42,7 @@ func TestEndpoints(t *testing.T) {
 }
 
 func TestRoutingErrors(t *testing.T) {
+	storage := testStore(t)
 	for _, tc := range []struct {
 		method, path string
 		status       int
@@ -48,7 +51,7 @@ func TestRoutingErrors(t *testing.T) {
 		{http.MethodPost, "/api/v1/ping", http.StatusMethodNotAllowed},
 	} {
 		response := httptest.NewRecorder()
-		routes().ServeHTTP(response, httptest.NewRequest(tc.method, tc.path, nil))
+		routes(storage).ServeHTTP(response, httptest.NewRequest(tc.method, tc.path, nil))
 		if response.Code != tc.status {
 			t.Fatalf("%s %s: got %d, want %d", tc.method, tc.path, response.Code, tc.status)
 		}
@@ -56,7 +59,7 @@ func TestRoutingErrors(t *testing.T) {
 }
 
 func TestHealthcheck(t *testing.T) {
-	server := httptest.NewServer(routes())
+	server := httptest.NewServer(routes(testStore(t)))
 	defer server.Close()
 	if err := checkHealth(server.URL + "/healthz"); err != nil {
 		t.Fatal(err)
@@ -68,4 +71,14 @@ func TestHealthcheck(t *testing.T) {
 	if err := checkHealth(server.URL + "/healthz"); err == nil {
 		t.Fatal("healthcheck must fail when server is unavailable")
 	}
+}
+
+func testStore(t *testing.T) *store {
+	t.Helper()
+	s, err := openStore(filepath.Join(t.TempDir(), "sagetracker.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.db.Close() })
+	return s
 }
